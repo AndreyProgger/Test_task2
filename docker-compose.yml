@@ -1,0 +1,83 @@
+services:
+  web:
+    # Указываем директорию . в которой содержится Dockerfile для сборки образа
+    build:
+      context: .
+      dockerfile: Dockerfile
+    # Запускаем встроенный сервер Django
+    command: python manage.py runserver 0.0.0.0:8000
+    # Пробрасываем 8000 порт контейнера на 8000 порт локалхоста(127.0.0.1:8000)
+    ports:
+      - 127.0.0.1:8000:8000
+    # Файл содержащий переменные окружения для контейнера
+    env_file:
+      - .env
+    volumes:
+      - .:/usr/src/app
+    depends_on:
+      - db
+      - memcached
+      - redis
+
+
+  db:
+    # Берём образ БД PostgreSQL версии 15
+    image: postgres:15
+    # Примонтируем том postgres-data к директории /var/lib/postgresql/data контейнера db
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    # Файл содержащий переменные окружения для контейнера
+    env_file:
+      - .env
+    # Используем значения переменных окружения из .env файла
+    environment:
+      - POSTGRES_USER=${SQL_USER}
+      - POSTGRES_PASSWORD=${SQL_PASSWORD}
+      - POSTGRES_DB=${SQL_DATABASE}
+
+  memcached:
+    # Берём образ Мemcached версии 1.6.21
+    image: memcached:1.6.21
+
+  celery:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: celery -A Test_task worker --loglevel=info
+    volumes:
+      - .:/usr/src/app
+    environment:
+      - PYTHONPATH=/app
+    depends_on:
+      - redis
+      - db
+      - web
+
+  celery_beat:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: celery -A Test_task beat --loglevel=info
+    volumes:
+      - .:/usr/src/app
+    env_file:
+      - .env
+    environment:
+      - PYTHONPATH=/app
+    depends_on:
+      - redis
+      - db
+      - celery
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes
+
+volumes:
+  # Объявляем том postgres-data для хранения данных PostgreSQL
+  postgres-data:
+  redis_data:
