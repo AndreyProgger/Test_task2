@@ -1,4 +1,6 @@
 import requests
+import logging
+
 from celery import shared_task
 
 from django.core.cache import cache
@@ -7,6 +9,9 @@ from django.core.mail import send_mail
 
 from Test_task.celery import app
 from orders.models import Order
+
+logger = logging.getLogger(__name__)
+cache_logger = logging.getLogger('hit/miss_cache logger')
 
 
 def generate_pdf(order):
@@ -21,6 +26,7 @@ def generate_pdf(order):
     pdf_file.drawString(100, 700, text)  # Добавляем текст на страницу
 
     pdf_file.save()
+    logger.info('Задача по генерации отчета успешно завершена')
     return pdf_file
 
 
@@ -48,10 +54,14 @@ def call_remote_api(url: str, cache_key: str, timeout: int = 300):
             response.raise_for_status()
             data = response.json()
             cache.set(cache_key, data, timeout=timeout)
+            cache_logger.info(f'Get data from response (cache_miss)')
             return data
         except requests.exceptions.RequestException as e:
+            logger.error('Задача по вызову внешнего API завершена с ошибкой')
             print(f'Error: {e}')
             return None
+    cache_logger.info(f'Get data from cache (cache_hit)')
+    logger.info('Задача по вызову внешнего API успешно завершена')
     return data
 
 

@@ -1,3 +1,5 @@
+import logging
+
 from django.http import Http404
 from django.core.cache import cache
 from rest_framework.views import APIView
@@ -15,6 +17,9 @@ from .filters import ProductFilter
 from .schema_examples import PRODUCT_PARAM_EXAMPLE
 
 tags = ["products"]
+
+logger = logging.getLogger(__name__)
+cache_logger = logging.getLogger('hit/miss_cache logger')
 
 
 class ProductListView(APIView):
@@ -37,8 +42,15 @@ class ProductListView(APIView):
         products = cache.get('cached_product_list')  # Пробуем получить из кэша, или кэшировать на 5 минут
         if products is None:
             products = Product.objects.all()
+            cache_logger.info('Get product list from bd (cache_miss)')
             cache.set('cached_product_list', list(products), 300)  # Кэшируем список
-        filterset = ProductFilter(request.query_params, queryset=products)
+            filterset = ProductFilter(request.query_params, queryset=products)
+        else:
+            cache_logger.info('Get product list from cache (cache_hit)')
+            # Если данные из кэша, создаем QuerySet из списка
+            product_ids = [product.id for product in products]
+            queryset_for_filter = Product.objects.filter(id__in=product_ids)
+            filterset = ProductFilter(request.query_params, queryset=queryset_for_filter)
         if filterset.is_valid():
             queryset = filterset.qs
             paginator = self.pagination_class()
@@ -49,6 +61,7 @@ class ProductListView(APIView):
             serializer = ProductSerializer(queryset, many=True)
             return Response(serializer.data)
         else:
+            logger.debug('Ошибка при получении списка продуктов')
             return Response(filterset.errors, status=400)
 
     @extend_schema(
@@ -63,8 +76,10 @@ class ProductListView(APIView):
         serializer = self.serializer_class(data=request.data, partial=True)
         if serializer.is_valid():
             serializer.save()
+            logger.info('Администратор успешно добавил новый продукт')
             return Response(serializer.data, status=201)
         else:
+            logger.warning('Ошибка при добавлении администратором нового продукта')
             return Response(
                 {'error': 'Неверные данные', 'details': serializer.errors},
                 status=400
@@ -83,10 +98,12 @@ class ProductDetailView(APIView):
         products = cache.get('cached_product_list')
         if products:
             # Ищем продукт в кэшированном словаре
-            product = products.get(pk)
-            if product:
-                return product
+            for product in products:
+                if product.pk == pk:
+                    cache_logger.info(f'Get product {product.pk} from cache (cache_hit)')
+                    return product
         try:
+            cache_logger.info('Get product from bd (cache_miss)')
             return Product.objects.get(pk=pk)
         except Product.DoesNotExist:
             raise Http404
@@ -102,6 +119,7 @@ class ProductDetailView(APIView):
     def get(self, request, pk):
         product = self.get_object(pk)
         serializer = self.serializer_class(product)
+        logger.info(f'Пользователь успешно получил информацию о товаре: {product.pk}')
         return Response(serializer.data)
 
     @extend_schema(
@@ -118,7 +136,9 @@ class ProductDetailView(APIView):
         serializer = self.serializer_class(product, data=request.data, partial=True)
         if serializer.is_valid():
             serializer.save()
+            logger.info(f'Администратор успешно обновил информацию о товаре: {product.pk}')
             return Response(serializer.data)
+        logger.warning(f'Ошибка при обновлении информации о товаре: {product.pk}')
         return Response(serializer.errors, status=400)
 
     @extend_schema(
@@ -132,4 +152,5 @@ class ProductDetailView(APIView):
     def delete(self, request, pk):
         product = self.get_object(pk)
         product.delete()
+        logger.info(f'Администратор успешно удалил информацию о товаре: {product.pk}')
         return Response(status=204)

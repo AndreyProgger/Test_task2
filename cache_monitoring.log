@@ -1,0 +1,6 @@
+
+INFO 2025-10-08 01:14:41,426 hit/miss_cache logger views.py (line 45) get Get product list from bd (cache_miss)
+INFO 2025-10-08 01:14:43,215 hit/miss_cache logger views.py (line 49) get Get product list from cache (cache_hit)
+INFO 2025-10-08 01:14:57,085 hit/miss_cache logger views.py (line 103) get_object Get product 3 from cache (cache_hit)
+INFO 2025-10-08 01:15:54,670 hit/miss_cache logger views.py (line 123) get_object Get order � 22 from bd (cache_miss)
+INFO 2025-10-08 01:15:55,996 hit/miss_cache logger views.py (line 119) get_object Get order � 22 from cache (cache_hit)

@@ -11,6 +11,7 @@ https://docs.djangoproject.com/en/5.2/ref/settings/
 """
 from dotenv import load_dotenv
 import os
+
 load_dotenv()
 import os
 import sys
@@ -97,6 +98,56 @@ DATABASES = {
         'PASSWORD': os.getenv('SQL_PASSWORD'),
         'HOST': os.getenv('SQL_HOST'),
         'PORT': os.getenv('SQL_PORT'),
+    }
+}
+
+# Конфигурация настройки логирования
+LOGGING = {
+    "version": 1,
+    "disable_existing_loggers": False,  # Не отключаем встроенный механизм логирования
+
+    "formatters": {
+        "simple": {  # Упрощенный форматер для вывода в консоль
+            "format": "{levelname} {asctime:s} {name} {message}",
+            "style": "{",
+        },
+        "extended": {  # Расширенный подробный форматер для вывода в файл
+            "format": "{levelname} {asctime:s} {name} {module}.py (line {lineno:d}) {funcName} {message}",
+            "style": "{",
+
+        }
+    },
+    "handlers": {
+        "console": {
+            "level": "DEBUG",
+            "class": "logging.StreamHandler",
+            "formatter": "simple",
+        },
+        "file": {  # единственное, файл некорректно читает UTF-8 кодировку
+            "level": "INFO",
+            "class": "logging.FileHandler",
+            "filename": BASE_DIR / "django.log",
+            "formatter": "extended",
+        },
+        "file_cache": {
+            "level": "INFO",
+            "class": "logging.FileHandler",
+            "filename": BASE_DIR / "cache_monitoring.log",
+            "formatter": "extended",
+        },
+    },
+    "loggers": {
+        "": {  # Основной логер
+            "handlers": ["file", "console"],
+            "level": "DEBUG",
+            "propagate": True,
+        },
+        "hit/miss_cache logger": {  # Логгер для мониторинга попаданий в кэш
+            "handlers": ["file_cache"],
+            "level": "INFO",
+            "propagate": True,
+        }
+
     }
 }
 

@@ -1,3 +1,5 @@
+import logging
+
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.throttling import UserRateThrottle
@@ -10,6 +12,8 @@ from .filters import OrderFilter
 from .schema_examples import ORDERS_PARAM_EXAMPLE
 
 tags = ["admin_orders"]
+
+logger = logging.getLogger(__name__)
 
 
 class OrdersListView(APIView):
@@ -33,6 +37,8 @@ class OrdersListView(APIView):
         if filterset.is_valid():
             queryset = filterset.qs
             serializer = self.serializer_class(queryset, many=True)
+            logger.info('Администратор успешно получил список продуктов')
             return Response(serializer.data)
         else:
+            logger.warning('Ошибка при получении администратором списка продуктов')
             return Response(filterset.errors, status=400)

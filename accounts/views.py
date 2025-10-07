@@ -1,3 +1,5 @@
+import logging
+
 from django.contrib.auth import get_user_model
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -11,6 +13,8 @@ from accounts.serializers import CreateUserSerializer, MyTokenObtainPairSerializ
 User = get_user_model()
 
 tags = ["auth"]
+
+logger = logging.getLogger(__name__)
 
 
 class MyTokenObtainPairView(TokenObtainPairView):
@@ -100,7 +104,10 @@ class RegisterAPIView(APIView):
                 samesite='Lax',
                 max_age=7 * 24 * 3600
             )
+            logger.info(f'Пользователь: {user.username} успешно зарегистрирован')
             return response
+        # Я поставил уровень debug чтобы не засорять файл подобными ошибками
+        logger.debug(f'Ошибка валидации при регистрации пользователя с данными: {request.data}')
         return Response(serializer.errors, status=400)
 
 
@@ -121,11 +128,14 @@ class LoginAPIView(TokenObtainPairView):
             # Проверяем активность пользователя
             user = serializer.user
             if not user.is_active:
+                logger.warning(f'Пользователь: {user.username} не смог войти в свой аккаунт, так как он не активен')
                 return Response(
                     {"message": "Аккаунт неактивен. Обратитесь к администратору."},
                     status=404
                 )
+            logger.info(f'Пользователь: {user.username} успешно вошел в свой аккаунт')
             return Response(serializer.validated_data, status=200)
+        logger.debug(f'Ошибка валидации при входе пользователя с данными: {request.data}')
         return Response(serializer.errors, status=400)
 
 

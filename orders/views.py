@@ -1,3 +1,5 @@
+import logging
+
 from django.db import transaction
 from rest_framework.views import APIView
 from rest_framework.response import Response
@@ -15,6 +17,9 @@ from .serializers import OrderSerializer, OrderUpdateSerializer
 from .tasks import call_remote_api
 
 tags = ["orders"]
+
+logger = logging.getLogger(__name__)
+cache_logger = logging.getLogger('hit/miss_cache logger')
 
 
 class OrderByUserListView(APIView):
@@ -34,6 +39,7 @@ class OrderByUserListView(APIView):
     def get(self, request):
         orders = Order.objects.prefetch_related('items__product').filter(user=request.user)
         serializer = self.serializer_class(orders, many=True)
+        logger.info(f'Пользователь: {request.user.username} успешно получил информацию о своих заказах')
         return Response(serializer.data)
 
     @extend_schema(
@@ -89,9 +95,11 @@ class OrderByUserListView(APIView):
                         status=400
                     )
                 order.save()
-                response_serializer = self.serializer_class(order)
-                return Response(response_serializer.data, status=201)
+            response_serializer = self.serializer_class(order)
+            logger.info(f'Пользователь: {request.user.username} успешно создал новый заказ')
+            return Response(response_serializer.data, status=201)
         else:
+            logger.warning(f'Пользователь: {request.user.username} ошибка при создании заказа')
             return Response(
                 {'error': 'Неверные данные', 'details': serializer.errors},
                 status=400
@@ -106,7 +114,14 @@ class OrderDetailView(APIView):
         """ Вспомогательная функция для получения объекта по pk """
         try:
             cache_key = f'cached_order_{pk}'
-            return cache.get_or_set(cache_key, Order.objects.prefetch_related('items__product').get(pk=pk), 60)
+            order = cache.get(cache_key)
+            if order is not None:
+                cache_logger.info(f'Get order № {order.pk} from cache (cache_hit)')
+                return order
+            order_cached = Order.objects.prefetch_related('items__product').get(pk=pk)
+            cache.set(cache_key, order_cached, 60)
+            cache_logger.info(f'Get order № {order_cached.pk} from bd (cache_miss)')
+            return order_cached
         except Order.DoesNotExist:
             raise Http404
 
@@ -121,6 +136,7 @@ class OrderDetailView(APIView):
     def get(self, request, pk):
         order = self.get_object(pk)
         serializer = self.serializer_class(order)
+        logger.info(f'Пользователь: {request.user.username} успешно получил информацию о заказе № {order.pk}')
         return Response(serializer.data)
 
     @extend_schema(
@@ -153,7 +169,9 @@ class OrderDetailView(APIView):
                 call_remote_api.delay('https://jsonplaceholder.typicode.com/users', 'api_cache')
             order.refresh_from_db()
             full_serializer = self.serializer_class(order)
+            logger.info(f'Пользователь: {request.user.username} успешно обновил информацию о заказе № {order.pk}')
             return Response(full_serializer.data, status=200)
+        logger.warning(f'Пользователь: {request.user.username} ошибка при обновлении информации о заказе № {order.pk}')
         return Response({'message': 'Отсутствуют данные или они некорректны'}, status=400)
 
     @extend_schema(
@@ -168,6 +186,8 @@ class OrderDetailView(APIView):
         order = self.get_object(pk)
         # Проверяем возможность отмены заказа и возвращение товаров на склад
         if order.status in ('shipped', 'delivered'):
+            logger.warning(
+                f'Пользователь: {request.user.username} ошибка при удалении заказа № {order.pk}')
             return Response({'message': 'Заказ не может быть удален, так как уже произошла отправка'}, status=400)
         # Транзакция возвращающая все товары на склад с последующим удалением заказа
         with transaction.atomic():
@@ -178,4 +198,5 @@ class OrderDetailView(APIView):
                 product.stock += item.quantity
                 product.save()
             order.delete()
+        logger.info(f'Пользователь: {request.user.username} успешно удалил заказ № {order.pk}')
         return Response(status=204)
