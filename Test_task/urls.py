@@ -22,7 +22,7 @@ from drf_spectacular.views import SpectacularAPIView, SpectacularSwaggerView
 from debug_toolbar.toolbar import debug_toolbar_urls
 
 urlpatterns = [
-    path('admin2/', admin.site.urls),
+    path('admin/', admin.site.urls),
     path("api/auth/", include("accounts.urls")),
     # Этот путь предоставляет доступ к сырой спецификации OpenAPI вашего API в формате JSON
     path("api/schema/", SpectacularAPIView.as_view(), name="schema"),
