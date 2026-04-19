@@ -22,11 +22,25 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/5.2/howto/deployment/checklist/
 
-# SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = os.getenv('SECRET_KEY')
-
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = os.getenv('DEBUG', 'False') == 'True'
+
+# чтобы выбрать окружение нужно добавить специальный файл и установить DEBUG False иначе настройки окружения
+# подтянуться из файла по умолчанию для разработки
+
+if DEBUG:
+    env_file = BASE_DIR / '.env'
+    if env_file.exists():
+        load_dotenv(env_file, override=True)
+        print("Loaded development settings from .env")
+else:
+    env_file = BASE_DIR / '.env.prod'
+    if env_file.exists():
+        load_dotenv(env_file, override=True)
+        print("Loaded production settings from .env.prod")
+
+# SECURITY WARNING: keep the secret key used in production secret!
+SECRET_KEY = os.getenv('SECRET_KEY')
 
 AUTH_USER_MODEL = 'accounts.User'
 
@@ -57,9 +71,12 @@ INSTALLED_APPS = [
     'rest_framework_simplejwt.token_blacklist',
     'debug_toolbar',
     'accounts',
-    'admin2',
     'orders',
     'products',
+    'favorites',
+    'delivery',
+    'carts',
+    'reviews',
 ]
 
 MIDDLEWARE = [
@@ -142,6 +159,12 @@ LOGGING = {
             "filename": BASE_DIR / "cache_monitoring.log",
             "formatter": "extended",
         },
+        "file_order_status": {  # файл для сохранения истории изменений статуса заказов
+            "level": "INFO",
+            "class": "logging.FileHandler",
+            "filename": BASE_DIR / "status_changes_monitoring.log",
+            "formatter": "extended",
+        },
     },
     "loggers": {
         "": {  # Основной логер
@@ -153,7 +176,13 @@ LOGGING = {
             "handlers": ["file_cache"],
             "level": "INFO",
             "propagate": True,
+        },
+        "status_changes logger": {  # Логгер для мониторинга изменений статуса заказов
+            "handlers": ["file_order_status"],
+            "level": "INFO",
+            "propagate": True,
         }
+
 
     }
 }
@@ -201,7 +230,7 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': [
-        'rest_framework_simplejwt.authentication.JWTAuthentication',  # new
+        'rest_framework_simplejwt.authentication.JWTAuthentication',
     ],
     'DEFAULT_SCHEMA_CLASS': 'drf_spectacular.openapi.AutoSchema',
     'DEFAULT_THROTTLE_CLASSES': [

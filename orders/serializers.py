@@ -31,6 +31,7 @@ class OrderItemSerializer(serializers.ModelSerializer):
 
 class OrderSerializer(serializers.Serializer):
     """ Сериализатор для модели заказа """
+    id = serializers.IntegerField(read_only=True)
     user = serializers.CharField(read_only=True)
     products = OrderItemCreateSerializer(write_only=True, many=True)
     items = OrderItemSerializer(many=True, read_only=True, source='items.all')
@@ -49,10 +50,9 @@ class OrderSerializer(serializers.Serializer):
         return value
 
 
-class OrderUpdateSerializer(serializers.ModelSerializer):
+class StatusUpdateSerializer(serializers.ModelSerializer):
     """Специальный сериализатор для обновления статуса заказа"""
 
     class Meta:
         model = Order
         fields = ['status']
-        read_only_fields = ['user', 'created_at', 'products']

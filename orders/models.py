@@ -19,16 +19,16 @@ class Order(models.Model):
     """
 
     STATUS_CHOICES = [
-        ('pending', 'Ожидает обработки'),
-        ('processing', 'В обработке'),
-        ('shipped', 'Отправлен'),
-        ('delivered', 'Доставлен'),
+        ('new', 'Создан'),
+        ('paid', 'Оплачен'),
+        ('in_delivery', 'Отправлен'),
+        ('completed', 'Доставлен'),
         ('cancelled', 'Отменен'),
     ]
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='owners')
     products = models.ManyToManyField(Product, through='OrderItem', through_fields=('order', 'product'),
                                       related_name='orders')
-    status = models.CharField(max_length=16, choices=STATUS_CHOICES, default='pending')
+    status = models.CharField(max_length=16, choices=STATUS_CHOICES, default='new')
     created_at = models.DateTimeField(default=timezone.now)
 
     class Meta:
@@ -52,6 +52,9 @@ class Order(models.Model):
     def total_price(self) -> Decimal:
         return self.calculate_total()
 
+    @property
+    def owner(self):
+        return self.user
 
 class OrderItem(models.Model):
     """
@@ -74,5 +77,7 @@ class OrderItem(models.Model):
         unique_together = ('order', 'product')
         verbose_name = 'Детали заказа'
         verbose_name_plural = 'Детали заказов'
+
+
 
 

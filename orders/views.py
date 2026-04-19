@@ -1,33 +1,48 @@
 import logging
 
-from django.db import transaction
+from django.db.models import Prefetch, Exists, OuterRef
+from django.shortcuts import get_object_or_404
+from django.utils import timezone
+from rest_framework.pagination import LimitOffsetPagination
+from rest_framework.request import Request
 from rest_framework.views import APIView
 from rest_framework.response import Response
-from django.http import Http404
 from rest_framework.decorators import permission_classes
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.throttling import UserRateThrottle
 from drf_spectacular.utils import extend_schema, OpenApiExample
-from django.core.cache import cache
 
-from products.models import Product
+from carts.models import Cart
+from carts.services import CartService
+from common.pagination import PAGINATION_PARAM_EXAMPLE
 from .models import Order, OrderItem
 from common.permissions import IsOwner, IsAdmin
-from .serializers import OrderSerializer, OrderUpdateSerializer
-from .tasks import call_remote_api
+from .serializers import OrderSerializer, StatusUpdateSerializer
+from .schema_examples import ORDER_PARAM_EXAMPLE
+from .filters import OrderFilter
+from .services import OrderService
+from .utils import get_order
 
 tags = ["orders"]
 
 logger = logging.getLogger(__name__)
 cache_logger = logging.getLogger('hit/miss_cache logger')
+status_logger = logging.getLogger('status_changes logger')
+
+STATUS_MOVES = {
+    'new': ('paid', 'cancelled'),
+    'paid': ('in_delivery', 'cancelled'),
+    'in_delivery': ('completed')
+}
 
 
 class OrderByUserListView(APIView):
     """ Представление выводящие список всех заказов сделанных пользователем """
 
     serializer_class = OrderSerializer
-    permission_class = IsAuthenticated
     throttle_classes = [UserRateThrottle]
+    pagination_class = LimitOffsetPagination
+    permission_classes = [IsAuthenticated]
 
     @extend_schema(
         summary="Retrieve all Order by user",
@@ -35,11 +50,32 @@ class OrderByUserListView(APIView):
                 This endpoint allows to retrieve all orders for request user.
             """,
         tags=tags,
+        parameters=ORDER_PARAM_EXAMPLE,
     )
-    def get(self, request):
-        orders = Order.objects.prefetch_related('items__product').filter(user=request.user)
-        serializer = self.serializer_class(orders, many=True)
-        logger.info(f'Пользователь: {request.user.username} успешно получил информацию о своих заказах')
+    def get(self, request: Request) -> Response:
+        if request.user.role == 'seller':
+            seller_items = OrderItem.objects.filter(product__user=request.user).select_related('product')
+
+            # Заказы, содержащие хотя бы один такой item
+            orders = Order.objects.filter(
+                Exists(seller_items.filter(order=OuterRef('pk')))
+            )
+            prefetch_items = Prefetch('items', queryset=seller_items)
+            orders = orders.prefetch_related(prefetch_items)
+
+            logger.info(f'Продавец: {request.user.username} успешно получил заказы со своими товарами')
+        else:
+            orders = Order.objects.filter(user=request.user).prefetch_related('items__product')
+            logger.info(f'Пользователь: {request.user.username} успешно получил информацию о своих заказах')
+        filterset = OrderFilter(request.query_params, queryset=orders)
+        if not filterset.is_valid():
+            return Response(filterset.errors, status=400)
+        queryset = filterset.qs
+        ordering = request.query_params.get('ordering', '-created_at')
+        if ordering in ['created_at', '-created_at']:
+            queryset = queryset.order_by(ordering)
+        serializer = self.serializer_class(queryset, many=True)
+
         return Response(serializer.data)
 
     @extend_schema(
@@ -48,155 +84,126 @@ class OrderByUserListView(APIView):
                 This endpoint allows a authenticated user to add new order.
             """,
         tags=tags,
+        request=None,
     )
-    def post(self, request):
-        serializer = self.serializer_class(data=request.data)
-        if serializer.is_valid():
-            validated_data = serializer.validated_data
-            with transaction.atomic():
-                # Создаем заказ
-                order = Order.objects.create(
-                    user=request.user,
-                    status=serializer.validated_data.get('status', 'pending')
-                )
-                products_data = validated_data.pop('products')
-                products_count = 0  # счетчик проверяющий наличие хотя бы одного релевантного товара
-                # Обрабатываем каждый продукт
-                for product_data in products_data:
-                    try:
-                        product = Product.objects.select_for_update().get(name__iexact=product_data['product_name'])
-                        quantity = product_data['quantity']
+    def post(self, request: Request) -> Response:
+        # Получаем корзину пользователя
+        cart = get_object_or_404(Cart, user=request.user)
 
-                        # Проверяем наличие
-                        if product.stock < quantity:
-                            return Response(
-                                {'error': f'Недостаточно товара {product.name} в наличии'},
-                                status=400
-                            )
+        # Создаем заказ через сервис
+        order, errors = OrderService.create_order_from_cart(
+            cart=cart,
+            user=request.user,
+            status='new'
+        )
 
-                        order_item = OrderItem.objects.create(
-                            order=order,
-                            product=product,
-                            quantity=quantity,
-                            price=product.price * quantity
-                        )
-                        order_item.save()
-                        # Обновляем склад
-                        product.stock -= quantity
-                        product.save()
-                        products_count += 1  # если товар существует и добавляем его к общему количеству
-
-                    # Если пользователь добавил не существующий товар, просто пропускаем его, выкидывая из корзины
-                    except Product.DoesNotExist:
-                        continue
-                if products_count == 0:
-                    return Response(
-                        {'error': 'В заказе не нашлось ни одного товара, который есть в наличии'},
-                        status=400
-                    )
-                order.save()
-            response_serializer = self.serializer_class(order)
-            logger.info(f'Пользователь: {request.user.username} успешно создал новый заказ')
-            return Response(response_serializer.data, status=201)
-        else:
-            logger.warning(f'Пользователь: {request.user.username} ошибка при создании заказа')
+        if errors:
+            logger.warning(
+                f'Пользователь {request.user.username} не смог создать заказ. '
+                f'Ошибки: {errors}'
+            )
             return Response(
-                {'error': 'Неверные данные', 'details': serializer.errors},
+                {
+                    'error': 'Невозможно создать заказ.',
+                    'details': errors
+                },
                 status=400
             )
+
+        # Очищаем корзину после успешного создания заказа
+        CartService.clear_cart(request.user)
+
+        logger.info(
+            f'Пользователь {request.user.username} успешно создал заказ #{order.pk} '
+            f'на сумму {order.total_price}'
+        )
+
+        serializer = self.serializer_class(order)
+        return Response(serializer.data, status=201)
 
 
 class OrderDetailView(APIView):
     serializer_class = OrderSerializer
     throttle_classes = [UserRateThrottle]
-
-    def get_object(self, pk):
-        """ Вспомогательная функция для получения объекта по pk """
-        try:
-            cache_key = f'cached_order_{pk}'
-            order = cache.get(cache_key)
-            if order is not None:
-                cache_logger.info(f'Get order № {order.pk} from cache (cache_hit)')
-                return order
-            order_cached = Order.objects.prefetch_related('items__product').get(pk=pk)
-            cache.set(cache_key, order_cached, 60)
-            cache_logger.info(f'Get order № {order_cached.pk} from bd (cache_miss)')
-            return order_cached
-        except Order.DoesNotExist:
-            raise Http404
+    permission_classes = [IsOwner, IsAuthenticated]
 
     @extend_schema(
         summary="Retrieve Order",
         description="""
-                This endpoint allows an owner or admin to get detail information about the order.
+                This endpoint allows an owner to get detail information about the order.
             """,
         tags=tags,
     )
-    @permission_classes([IsOwner, IsAdmin])
-    def get(self, request, pk):
-        order = self.get_object(pk)
+    def get(self, request: Request, pk: int) -> Response:
+        order = get_order(pk)
+        self.check_object_permissions(request, order)
         serializer = self.serializer_class(order)
         logger.info(f'Пользователь: {request.user.username} успешно получил информацию о заказе № {order.pk}')
         return Response(serializer.data)
 
     @extend_schema(
-        summary="Edit Order status",
+        summary="Delete Order",
         description="""
-                This endpoint allows a owner to edit order status.
+                This endpoint allows a owner to delete order.
             """,
         tags=tags,
-        request=OrderUpdateSerializer,  # Явно указываем сериализатор для запроса
+    )
+    def delete(self, request: Request, pk: int) -> Response:
+        order = get_order(pk)
+        self.check_object_permissions(request, order)
+        if order.status != 'cancelled':
+            # так как уже возвращали при смене статуса
+            OrderService.restore_stock_for_cancelled_order(order)
+        order.delete()
+        logger.info(f'Пользователь: {request.user.username} успешно удалил заказ № {order.pk}')
+        return Response(status=204)
+
+
+class StatusUpdateView(APIView):
+    serializer_class = StatusUpdateSerializer
+    throttle_classes = [UserRateThrottle]
+    permission_classes = [IsAdmin, IsAuthenticated]
+
+    @extend_schema(
+        summary="Edit Order status",
+        description="""
+                    This endpoint allows a owner to edit order status.
+                """,
+        tags=tags,
         examples=[
             OpenApiExample(
                 "Example request",
-                value={"status": "shipped"},
+                value={"status": "new"},
                 request_only=True
             )
         ]
     )
-    @permission_classes([IsOwner, IsAdmin])
-    def put(self, request, pk):
-        order = self.get_object(pk)
-        # Используем специальный сериализатор чтобы после создания заказа можно было обновить только статус
-        serializer = OrderUpdateSerializer(order, data=request.data)
+    def put(self, request: Request, pk: int) -> Response:
+        order = get_order(pk)
+        serializer = StatusUpdateSerializer(order, data=request.data)
         if serializer.is_valid():
             # Проверяем чтобы новые данные не повторяли уже существующие,
             # чтобы лишний раз не обращаться к БД (refresh_from_db())
             if serializer.validated_data.get('status') == order.status:
-                return Response({'message: Данный статус заказа уже установлен'}, status=400)
+                return Response({'message': 'Данный статус заказа уже установлен'}, status=400)
+            new_status = serializer.validated_data.get('status')
+            if order.status in ('completed', 'cancelled'):
+                return Response({'message': 'Нельзя изменить статус отмененного или выполненного заказа'}, status=400)
+            status_moves = STATUS_MOVES[order.status]
+            if new_status not in status_moves:
+                return Response({'message': 'Не допустимый переход статуса'}, status=400)
             serializer.save()
-            if serializer.validated_data.get('status') == 'shipped':
-                call_remote_api.delay('https://jsonplaceholder.typicode.com/users', 'api_cache')
+            if new_status == 'cancelled':
+                # Если заказ отменен возвращаем товары на склад
+                OrderService.restore_stock_for_cancelled_order(order)
+                order.delete()
+                return Response({'message': 'Заказ отменён, товары возвращены на склад'}, status=200)
             order.refresh_from_db()
             full_serializer = self.serializer_class(order)
-            logger.info(f'Пользователь: {request.user.username} успешно обновил информацию о заказе № {order.pk}')
+            # Сохраняем изменения статусов заказа в специальный log файл
+            status_logger.info(f'Статус заказа: {order.pk} пользователя {order.user} был успешно изменен на '
+                               f'{order.status} в {timezone.now().strftime("%Y-%m-%d %H:%M:%S %Z")}')
+            logger.info(f'Пользователь: {request.user.username} успешно обновил информацию о статусе заказа № {order.pk}')
             return Response(full_serializer.data, status=200)
-        logger.warning(f'Пользователь: {request.user.username} ошибка при обновлении информации о заказе № {order.pk}')
+        logger.warning(f'Ошибка при обновлении информации о статусе заказа № {order.pk}')
         return Response({'message': 'Отсутствуют данные или они некорректны'}, status=400)
-
-    @extend_schema(
-        summary="Delete Order",
-        description="""
-                This endpoint allows a owner or admin2 to delete order.
-            """,
-        tags=tags,
-    )
-    @permission_classes([IsOwner, IsAdmin])
-    def delete(self, request, pk):
-        order = self.get_object(pk)
-        # Проверяем возможность отмены заказа и возвращение товаров на склад
-        if order.status in ('shipped', 'delivered'):
-            logger.warning(
-                f'Пользователь: {request.user.username} ошибка при удалении заказа № {order.pk}')
-            return Response({'message': 'Заказ не может быть удален, так как уже произошла отправка'}, status=400)
-        # Транзакция возвращающая все товары на склад с последующим удалением заказа
-        with transaction.atomic():
-            order_detail = Order.objects.prefetch_related('items__product').get(pk=order.pk)
-            for item in order_detail.items.all():
-                product = Product.objects.select_for_update().get(id=item.product.id)
-                # Возвращаем количество каждого товара в заказе на баланс склада
-                product.stock += item.quantity
-                product.save()
-            order.delete()
-        logger.info(f'Пользователь: {request.user.username} успешно удалил заказ № {order.pk}')
-        return Response(status=204)

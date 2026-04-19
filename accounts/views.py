@@ -1,14 +1,18 @@
 import logging
 
 from django.contrib.auth import get_user_model
+from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework_simplejwt.views import TokenObtainPairView
 from rest_framework.throttling import AnonRateThrottle
 from drf_spectacular.utils import extend_schema
+from rest_framework_simplejwt.token_blacklist.models import OutstandingToken, BlacklistedToken
 
-from accounts.serializers import CreateUserSerializer, MyTokenObtainPairSerializer, LoginSerializer
+from accounts.serializers import CreateUserSerializer, MyTokenObtainPairSerializer, LoginSerializer, \
+    ChangePasswordSerializer, UserProfileSerializer, UserProfileUpdateSerializer
+from common.permissions import IsOwner
 
 User = get_user_model()
 
@@ -77,6 +81,7 @@ class RegisterAPIView(APIView):
                     'last_name': user.last_name,
                     'username': user.username,
                     'patronymic': user.patronymic,
+                    'role': user.role,
                 },
                 'tokens': {
                     'access': str(refresh.access_token),
@@ -167,4 +172,95 @@ class LogoutAPIView(APIView):
             pass
 
         return response
+
+
+class UserProfileView(APIView):
+    """
+    Просмотр профиля текущего пользователя.
+    """
+    serializer_class = UserProfileSerializer
+    permission_classes = [IsAuthenticated, IsOwner]
+
+    @extend_schema(
+        summary="Получение профиля",
+        description="Возвращает данные текущего пользователя и его расширенный профиль.",
+        tags=["profile"],
+    )
+    def get(self, request, *args, **kwargs):
+        serializer = self.serializer_class(request.user)
+        logger.info(f'Пользователь {request.user.email} запросил свой профиль')
+        return Response(serializer.data)
+
+    def get_object(self):
+        return self.request.user
+
+
+class UserProfileUpdateView(APIView):
+    """
+    Обновление профиля текущего пользователя (User + Profile).
+    """
+    serializer_class = UserProfileUpdateSerializer
+    permission_classes = [IsAuthenticated, IsOwner]
+
+    @extend_schema(
+        summary="Обновление профиля",
+        description="Обновляет данные пользователя и его расширенный профиль.",
+        tags=["profile"],
+    )
+    def patch(self, request, *args, **kwargs):
+        serializer = self.serializer_class(
+            request.user,
+            data=request.data,
+            partial=True
+        )
+        if serializer.is_valid():
+            user = serializer.save()
+            logger.info(f'Пользователь {user.email} обновил свой профиль')
+            profile_serializer = UserProfileSerializer(user, context={'request': request})
+            return Response({
+                'message': 'Профиль успешно обновлен',
+                'user': profile_serializer.data
+            }, status=200)
+
+        logger.debug(f'Ошибка обновления профиля: {serializer.errors}')
+        return Response(serializer.errors, status=400)
+
+    def get_object(self):
+        return self.request.user
+
+
+class ChangePasswordView(APIView):
+    """
+    Смена пароля текущего пользователя.
+    """
+    serializer_class = ChangePasswordSerializer
+    permission_classes = [IsAuthenticated, IsOwner]
+
+    @extend_schema(
+        summary="Смена пароля",
+        description="Изменяет пароль пользователя и инвалидирует все его токены.",
+        tags=["profile"],
+    )
+    def post(self, request, *args, **kwargs):
+        serializer = self.serializer_class(data=request.data, context={'request': request})
+        if serializer.is_valid():
+            user = serializer.save()
+            logger.info(f'Пользователь {user.email} сменил пароль')
+
+            tokens = OutstandingToken.objects.filter(user_id=user.id)
+            for token in tokens:
+                BlacklistedToken.objects.get_or_create(token=token)
+
+            response = Response({
+                'message': 'Пароль успешно изменен. Пожалуйста, войдите снова.'
+            }, status=200)
+            response.delete_cookie('access_token')
+            response.delete_cookie('refresh_token')
+            return response
+
+        logger.debug(f'Ошибка смены пароля: {serializer.errors}')
+        return Response(serializer.errors, status=400)
+
+    def get_object(self):
+        return self.request.user
 

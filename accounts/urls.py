@@ -1,8 +1,8 @@
 from django.urls import path
 from rest_framework_simplejwt.views import TokenRefreshView, TokenVerifyView
 
-from accounts.views import RegisterAPIView, MyTokenObtainPairView, LoginAPIView, LogoutAPIView
-
+from accounts.views import RegisterAPIView, MyTokenObtainPairView, LoginAPIView, LogoutAPIView, UserProfileView, \
+    UserProfileUpdateView, ChangePasswordView
 
 urlpatterns = [
     # Это корневой URL. Все запросы, отправленные на корневой URL вашего API, будут перенаправлены в RegisterAPIView
@@ -15,4 +15,7 @@ urlpatterns = [
     path('token/refresh/', TokenRefreshView.as_view(), name='token_refresh'),
     # Этот URL предназначен для проверки действительности токена доступа (access token).
     path('token/verify/', TokenVerifyView.as_view(), name='token_verify'),
+    path('me/', UserProfileView.as_view(), name='user-profile'),
+    path('me/update/', UserProfileUpdateView.as_view(), name='user-profile-update'),
+    path('change-password/', ChangePasswordView.as_view(), name='change-password'),
 ]

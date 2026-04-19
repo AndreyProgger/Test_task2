@@ -1,0 +1,7 @@
+INFO 2026-04-15 23:31:28,495 status_changes logger views.py (line 210) put Статус заказа: 25 пользователя string string string user был успешно изменен на cancelled в 2026-04-15 20:31:28 UTC
+INFO 2026-04-17 17:22:45,453 status_changes logger views.py (line 208) put Статус заказа: 1 пользователя Test None User user был успешно изменен на paid в 2026-04-17 14:22:45 UTC
+INFO 2026-04-17 17:25:12,553 status_changes logger views.py (line 208) put Статус заказа: 1 пользователя Test None User user был успешно изменен на paid в 2026-04-17 14:25:12 UTC
+INFO 2026-04-17 17:36:27,422 status_changes logger views.py (line 209) put Статус заказа: 1 пользователя Test None User user был успешно изменен на paid в 2026-04-17 14:36:27 UTC
+INFO 2026-04-17 17:44:28,543 status_changes logger views.py (line 209) put Статус заказа: 10 пользователя Test None User user был успешно изменен на paid в 2026-04-17 14:44:28 UTC
+INFO 2026-04-17 18:19:45,592 status_changes logger views.py (line 209) put Статус заказа: 10 пользователя Test None User user был успешно изменен на paid в 2026-04-17 15:19:45 UTC
+INFO 2026-04-19 22:44:06,903 status_changes logger views.py (line 204) put Статус заказа: 10 пользователя Test None User user был успешно изменен на paid в 2026-04-19 19:44:06 UTC

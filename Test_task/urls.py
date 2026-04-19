@@ -30,7 +30,10 @@ urlpatterns = [
     path("api/docs/", SpectacularSwaggerView.as_view(url_name="schema"), name="swagger-ui"),
     path("api/products/", include("products.urls")),
     path("api/orders/", include("orders.urls")),
-    path("api/admin2/", include("admin2.urls")),
+    path("api/favorites/", include("favorites.urls")),
+    path("api/address/", include("delivery.urls")),
+    path("api/carts/", include("carts.urls")),
+
 ]
 
 if settings.DEBUG:
